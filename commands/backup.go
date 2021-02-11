@@ -23,7 +23,8 @@ func BackupCommand() *cobra.Command {
 func createSnapshots(tagValue string, backupId string) {
 	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:backup").SetValues([]*string{aws.String(tagValue)})}
 	input := new(ec2.DescribeInstancesInput).SetFilters(filters)
-	var instances []*ec2.Instance
+	instancesMap := make(map[string]*ec2.Instance)
+	//TODO check for pre-existing snapshots and warn or remove
 	for ok := true; ok; {
 		out, err := ec2c.DescribeInstances(input)
 		if err != nil {
@@ -33,7 +34,7 @@ func createSnapshots(tagValue string, backupId string) {
 			for _, i := range r.Instances {
 				for _, b := range i.BlockDeviceMappings {
 					if *b.DeviceName == rootVol {
-						instances = append(instances, i)
+						instancesMap[*i.InstanceId] = i
 					}
 				}
 			}
@@ -43,24 +44,14 @@ func createSnapshots(tagValue string, backupId string) {
 		}
 	}
 
-	for _, i := range instances {
-		log.Printf("Shutting down %s\n", *i.InstanceId)
-		_, err := ec2c.StopInstances(new(ec2.StopInstancesInput).SetInstanceIds([]*string{i.InstanceId}))
-		if err != nil {
-			log.Fatal("Can't stop instance", err)
-		}
-	}
+	ids := shutdownInstances(instancesMap)
 
-	err := ec2c.WaitUntilInstanceStopped(input)
-	if err != nil {
-		log.Fatal("Can't stop instance", err)
-	}
-	for _, i := range instances {
+	for id, i := range instancesMap {
 		for _, b := range i.BlockDeviceMappings {
 			if *b.DeviceName == rootVol {
-				log.Printf("Snapshotting %s of %s ", *i.InstanceId, *b.Ebs.VolumeId)
+				log.Printf("Snapshotting %s of %s ", id, *b.Ebs.VolumeId)
 				tags := append(i.Tags, new(ec2.Tag).SetKey("autorestore-backupId").SetValue(backupId))
-				tags = append(tags, new(ec2.Tag).SetKey("autorestore-instanceId").SetValue(*i.InstanceId))
+				tags = append(tags, new(ec2.Tag).SetKey("autorestore-instanceId").SetValue(id))
 				csi := new(ec2.CreateSnapshotInput).
 					SetVolumeId(*b.Ebs.VolumeId).
 					SetTagSpecifications([]*ec2.TagSpecification{new(ec2.TagSpecification).
@@ -73,9 +64,7 @@ func createSnapshots(tagValue string, backupId string) {
 				log.Printf("Created %s\n", *snap.SnapshotId)
 			}
 		}
-		_, err := ec2c.StartInstances(new(ec2.StartInstancesInput).SetInstanceIds([]*string{i.InstanceId}))
-		if err != nil {
-			log.Println("Can't start instance", err)
-		}
 	}
+
+	restartInstances(ids)
 }
