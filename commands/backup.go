@@ -19,7 +19,6 @@ func BackupCommand() *cobra.Command {
 	}
 }
 
-
 func createSnapshots(tagValue string, backupId string) {
 	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:backup").SetValues([]*string{aws.String(tagValue)})}
 	input := new(ec2.DescribeInstancesInput).SetFilters(filters)
