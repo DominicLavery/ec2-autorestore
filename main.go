@@ -13,7 +13,7 @@ func main() {
 	ec2c := ec2.New(sess)
 
 	commands.InitialiseCommands(ec2c)
-	var rootCmd = &cobra.Command{Use: "app"}
+	var rootCmd = &cobra.Command{Use: "ec2-restore"}
 	rootCmd.AddCommand(commands.BackupCommand(), commands.RestoreCommand())
 	err := rootCmd.Execute()
 
