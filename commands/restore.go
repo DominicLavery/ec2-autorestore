@@ -29,6 +29,9 @@ func restore(backupId string) {
 		if err != nil {
 			log.Fatal("Can't get snapshots", err)
 		}
+		if len(out.Snapshots) == 0 {
+			log.Fatalf("Can't get snapshots: There are none with a backup ID of %v\n", backupId)
+		}
 		processSnapshots(out.Snapshots)
 		if ok = out.NextToken != nil; ok {
 			input.SetNextToken(*out.NextToken)
