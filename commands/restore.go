@@ -21,7 +21,7 @@ func RestoreCommand() *cobra.Command {
 
 func restore(backupId string) {
 	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:autorestore-backupId").SetValues([]*string{aws.String(backupId)})}
-	var strings = []*string{aws.String("347316231722")}
+	var strings = []*string{aws.String("self")}
 	input := new(ec2.DescribeSnapshotsInput).SetOwnerIds(strings).SetFilters(filters)
 
 	for ok := true; ok; {
