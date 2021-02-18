@@ -1,21 +1,21 @@
 package commands
 
 import (
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"log"
 )
 
 var ec2c *ec2.EC2
-//const rootVol = "/dev/xvda"
-const rootVol = "/dev/sda1" //TODO make configurable with flag
 
 func InitialiseCommands(e *ec2.EC2) {
 	ec2c = e
 }
 
 func shutdownInstances(instancesMap map[string]*ec2.Instance) []*string {
+	//TODO handle situation where instances are shutdown already?
 	var ids []*string
-	log.Println("Attempting to shutdown instances")
+	log.Println("Shutting down instances")
 	for _, i := range instancesMap {
 		ids = append(ids, i.InstanceId)
 	}
@@ -33,9 +33,27 @@ func shutdownInstances(instancesMap map[string]*ec2.Instance) []*string {
 }
 
 func restartInstances(ids []*string) {
-	log.Printf("Attempting to restart")
+	log.Printf("Restartting instances")
 	_, err := ec2c.StartInstances(new(ec2.StartInstancesInput).SetInstanceIds(ids))
 	if err != nil {
 		log.Println("Can't start instance", err)
 	}
+}
+
+func getSnapshots(backupId string) ([]*ec2.Snapshot, error) {
+	var snapshots []*ec2.Snapshot
+	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:autorestore-backupId").SetValues([]*string{aws.String(backupId)})}
+	var ownerIds = []*string{aws.String("self")}
+	input := new(ec2.DescribeSnapshotsInput).SetOwnerIds(ownerIds).SetFilters(filters)
+	for ok := true; ok; {
+		out, err := ec2c.DescribeSnapshots(input)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, out.Snapshots...)
+		if ok = out.NextToken != nil; ok {
+			input.SetNextToken(*out.NextToken)
+		}
+	}
+	return snapshots, nil
 }

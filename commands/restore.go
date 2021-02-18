@@ -20,23 +20,14 @@ func RestoreCommand() *cobra.Command {
 }
 
 func restore(backupId string) {
-	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:autorestore-backupId").SetValues([]*string{aws.String(backupId)})}
-	var strings = []*string{aws.String("self")}
-	input := new(ec2.DescribeSnapshotsInput).SetOwnerIds(strings).SetFilters(filters)
-
-	for ok := true; ok; {
-		out, err := ec2c.DescribeSnapshots(input)
-		if err != nil {
-			log.Fatal("Can't get snapshots", err)
-		}
-		if len(out.Snapshots) == 0 {
-			log.Fatalf("Can't get snapshots: There are none with a backup ID of %v\n", backupId)
-		}
-		processSnapshots(out.Snapshots)
-		if ok = out.NextToken != nil; ok {
-			input.SetNextToken(*out.NextToken)
-		}
+	snapshots, err := getSnapshots(backupId)
+	if err != nil {
+		log.Fatal("Can't get snapshots", err)
 	}
+	if len(snapshots) == 0 {
+		log.Fatalf("there are no snapshots with backup id of %v for this account", backupId)
+	}
+	processSnapshots(snapshots)
 }
 
 func processSnapshots(snapshots []*ec2.Snapshot) {
@@ -62,7 +53,7 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	var detachedVolumes []*string
 	for id, i := range instancesMap {
 		for _, b := range i.BlockDeviceMappings {
-			if *b.DeviceName == rootVol {
+			if *b.DeviceName == *i.RootDeviceName {
 				log.Printf("Attempting to detach vol for %s from %s\n", *b.Ebs.VolumeId, id)
 				_, err := ec2c.DetachVolume(new(ec2.DetachVolumeInput).SetVolumeId(*b.Ebs.VolumeId))
 				if err != nil {
@@ -83,11 +74,12 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	//Attach the new volumes
 	var attachedVolumes []*string
 	for id, v := range newVolumesMap {
-		log.Printf("Attempt to attach vol %s to %s", *v.VolumeId, id)
-		_, err := ec2c.AttachVolume(new(ec2.AttachVolumeInput).SetInstanceId(id).SetVolumeId(*v.VolumeId).SetDevice(rootVol))
+		log.Printf("Attaching vol %s to %s", *v.VolumeId, id)
+		i := instancesMap[id]
+		_, err := ec2c.AttachVolume(new(ec2.AttachVolumeInput).SetInstanceId(id).SetVolumeId(*v.VolumeId).SetDevice(*i.RootDeviceName))
 		if err != nil {
 			//TODO Some better handling
-			log.Println("Can't attach", err)
+			log.Printf("Failed to attach %v because: %v\n", *v.VolumeId, err)
 		}
 		attachedVolumes = append(attachedVolumes, v.VolumeId)
 	}
@@ -101,7 +93,7 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	//TODO Add an option to delete the detached volumes? And the snapshots?
 }
 
-func gatherInfo(snapshots []*ec2.Snapshot) (map[string]*ec2.Instance, map[string]*ec2.Snapshot){
+func gatherInfo(snapshots []*ec2.Snapshot) (map[string]*ec2.Instance, map[string]*ec2.Snapshot) {
 	instancesMap := make(map[string]*ec2.Instance)
 	snapshotMap := make(map[string]*ec2.Snapshot)
 	for _, s := range snapshots {
