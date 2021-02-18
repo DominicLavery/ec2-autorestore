@@ -27,7 +27,7 @@ func createSnapshots(tagValue string, backupId string) {
 	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:backup").SetValues([]*string{aws.String(tagValue)})}
 	input := new(ec2.DescribeInstancesInput).SetFilters(filters)
 	instancesMap := make(map[string]*ec2.Instance)
-	//TODO check for pre-existing snapshots and warn or remove
+
 	for ok := true; ok; {
 		out, err := ec2c.DescribeInstances(input)
 		if err != nil {
@@ -35,11 +35,8 @@ func createSnapshots(tagValue string, backupId string) {
 		}
 		for _, r := range out.Reservations {
 			for _, i := range r.Instances {
-				for _, b := range i.BlockDeviceMappings {
-					if *b.DeviceName == rootVol {
-						instancesMap[*i.InstanceId] = i
-					}
-				}
+				log.Printf("Found instance \"%v\"", *i.InstanceId)
+				instancesMap[*i.InstanceId] = i
 			}
 		}
 		if ok = out.NextToken != nil; ok {
@@ -52,7 +49,7 @@ func createSnapshots(tagValue string, backupId string) {
 		log.Fatalf("Error checking for existing backups: %v", err)
 	}
 	if len(snapshots) > 0 {
-		fmt.Printf("There are existing backups with the id %v\n", backupId)
+		fmt.Printf("There are existing backups with the id \"%v\":\n", backupId)
 		handleDuplicateBackups(snapshots)
 	}
 
@@ -60,8 +57,8 @@ func createSnapshots(tagValue string, backupId string) {
 
 	for id, i := range instancesMap {
 		for _, b := range i.BlockDeviceMappings {
-			if *b.DeviceName == rootVol {
-				log.Printf("Snapshotting %s of %s ", id, *b.Ebs.VolumeId)
+			if *b.DeviceName == *i.RootDeviceName {
+				log.Printf("Snapshotting %s of %s", id, *b.Ebs.VolumeId)
 				tags := append(i.Tags, new(ec2.Tag).SetKey("autorestore-backupId").SetValue(backupId))
 				tags = append(tags, new(ec2.Tag).SetKey("autorestore-instanceId").SetValue(id))
 				csi := new(ec2.CreateSnapshotInput).
@@ -82,6 +79,12 @@ func createSnapshots(tagValue string, backupId string) {
 }
 
 func handleDuplicateBackups(snapshots []*ec2.Snapshot) {
+	for _, s := range snapshots {
+		fmt.Printf("%v ", *s.SnapshotId)
+	}
+	fmt.Println()
+	fmt.Println()
+
 	for ok := false; !ok; {
 		fmt.Printf("Delete or cancel [d/c]? ")
 		reader := bufio.NewReader(os.Stdin)
@@ -97,10 +100,10 @@ func handleDuplicateBackups(snapshots []*ec2.Snapshot) {
 	}
 
 	for _, s := range snapshots {
-		log.Printf("Deleting %v\n", s.SnapshotId)
+		log.Printf("Deleting %v\n", *s.SnapshotId)
 		_, err := ec2c.DeleteSnapshot(new(ec2.DeleteSnapshotInput).SetSnapshotId(*s.SnapshotId))
 		if err != nil {
-			log.Fatalf("Deleting %v failed: %v\n", s.SnapshotId, err)
+			log.Fatalf("Deleting %v failed: %v\n", *s.SnapshotId, err)
 		}
 	}
 }
