@@ -36,10 +36,12 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 
 	//Make volumes
 	for id, i := range instancesMap {
+		ts := []*ec2.TagSpecification{new(ec2.TagSpecification).SetTags(snapshotMap[id].Tags).SetResourceType("volume")}
 		log.Printf("Attempting to create volume for %s", id)
 		v, err := ec2c.CreateVolume(new(ec2.CreateVolumeInput).
 			SetSnapshotId(*snapshotMap[id].SnapshotId).
-			SetAvailabilityZone(*i.Placement.AvailabilityZone))
+			SetAvailabilityZone(*i.Placement.AvailabilityZone).
+			SetTagSpecifications(ts))
 		if err != nil {
 			//TODO delete vols
 			log.Fatalf("Couldn't create volume because %s", err)
