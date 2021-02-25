@@ -101,7 +101,7 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 		}
 		err = checkAndDeleteVolumes(detachedVols)
 		if err != nil {
-			log.Fatal("Can't reattach vol", err)
+			log.Fatal("Can't delete volumes because ", err)
 		}
 	}
 }

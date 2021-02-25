@@ -9,11 +9,12 @@ func PruneCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "prune",
 		Short: "Cleans up old EC2 resources",
-		Long:  `TODO`,
+		Long:  `Cleans up old EC2 resources left over from other commands based on backup IDs`,
 	}
 	command.AddCommand(&cobra.Command{
-		Use:   "volumes",
-		Short: "Prunes unused backup volumes",
+		Use:   "volumes [backup id]",
+		Short: "Prunes unused volumes",
+		Long:  "Prunes unused volumes left behind after a restore that have the given backup id",
 		Run: func(cmd *cobra.Command, args []string) {
 			pruneVolumes(args[0])
 		},
@@ -21,7 +22,8 @@ func PruneCommand() *cobra.Command {
 
 	command.AddCommand(&cobra.Command{
 		Use:   "snapshots [backup id]",
-		Short: "Prunes snapshots with the given ID",
+		Short: "Prunes snapshots",
+		Long:  "Prunes snapshots that have the given backup id",
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			pruneSnapshots(args[0])
