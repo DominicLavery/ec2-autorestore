@@ -12,6 +12,8 @@ import (
 
 var ec2c *ec2.EC2
 
+var rmVolumes bool
+
 func InitialiseCommands(e *ec2.EC2) {
 	ec2c = e
 }
@@ -116,10 +118,25 @@ func getVolumes(backupId string) ([]*ec2.Volume, error) {
 	}
 	return vols, nil
 }
+func getVolumesByIds(backupIds []*string) ([]*ec2.Volume, error) {
+	var vols []*ec2.Volume
+	input := new(ec2.DescribeVolumesInput).SetVolumeIds(backupIds)
+	for ok := true; ok; {
+		out, err := ec2c.DescribeVolumes(input)
+		if err != nil {
+			return nil, err
+		}
+		vols = append(vols, out.Volumes...)
+		if ok = out.NextToken != nil; ok {
+			input.SetNextToken(*out.NextToken)
+		}
+	}
+	return vols, nil
+}
 
 func deleteVolumes(vols []*ec2.Volume) error {
 	for _, v := range vols {
-		log.Printf("Deleting snapshot \"%v\"", *v.VolumeId)
+		log.Printf("Deleting volume \"%v\"", *v.VolumeId)
 		_, err := ec2c.DeleteVolume(new(ec2.DeleteVolumeInput).SetVolumeId(*v.VolumeId))
 		if err != nil {
 			return err
