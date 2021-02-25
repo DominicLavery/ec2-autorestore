@@ -14,7 +14,7 @@ func main() {
 
 	commands.InitialiseCommands(ec2c)
 	var rootCmd = &cobra.Command{Use: "ec2-restore"}
-	rootCmd.AddCommand(commands.BackupCommand(), commands.RestoreCommand())
+	rootCmd.AddCommand(commands.BackupCommand(), commands.RestoreCommand(), commands.PruneCommand())
 	err := rootCmd.Execute()
 
 	if err != nil {

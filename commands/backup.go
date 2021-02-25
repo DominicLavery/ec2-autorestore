@@ -1,14 +1,11 @@
 package commands
 
 import (
-	"bufio"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/spf13/cobra"
 	"log"
-	"os"
-	"strings"
 )
 
 func BackupCommand() *cobra.Command {
@@ -50,7 +47,10 @@ func createSnapshots(tagValue string, backupId string) {
 	}
 	if len(snapshots) > 0 {
 		fmt.Printf("There are existing backups with the id \"%v\":\n", backupId)
-		handleDuplicateBackups(snapshots)
+		err = checkAndDeleteSnaps(snapshots)
+		if err != nil {
+			log.Fatalf("Could not delete snapshots because %v", err)
+		}
 	}
 
 	ids := shutdownInstances(instancesMap)
@@ -76,34 +76,4 @@ func createSnapshots(tagValue string, backupId string) {
 	}
 
 	restartInstances(ids)
-}
-
-func handleDuplicateBackups(snapshots []*ec2.Snapshot) {
-	for _, s := range snapshots {
-		fmt.Printf("%v ", *s.SnapshotId)
-	}
-	fmt.Println()
-	fmt.Println()
-
-	for ok := false; !ok; {
-		fmt.Printf("Delete or cancel [d/c]? ")
-		reader := bufio.NewReader(os.Stdin)
-		text, _ := reader.ReadString('\n')
-		text = strings.TrimSuffix(text, "\n")
-		switch text {
-		case "c":
-			log.Println("User exited")
-			os.Exit(0)
-		case "d":
-			ok = true
-		}
-	}
-
-	for _, s := range snapshots {
-		log.Printf("Deleting %v\n", *s.SnapshotId)
-		_, err := ec2c.DeleteSnapshot(new(ec2.DeleteSnapshotInput).SetSnapshotId(*s.SnapshotId))
-		if err != nil {
-			log.Fatalf("Deleting %v failed: %v\n", *s.SnapshotId, err)
-		}
-	}
 }
