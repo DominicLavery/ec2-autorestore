@@ -8,7 +8,7 @@ import (
 )
 
 func RestoreCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "restore [backupID]",
 		Short: "Restores an instance from a backup",
 		Long:  `Restores an instance from a backup to snapshots with the given backup id,`,
@@ -17,6 +17,8 @@ func RestoreCommand() *cobra.Command {
 			restore(args[0])
 		},
 	}
+	cmd.Flags().BoolVarP(&rmVolumes, "dvols", "d", false, "Deletes the volumes detached from the instance")
+	return cmd
 }
 
 func restore(backupId string) {
@@ -36,10 +38,12 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 
 	//Make volumes
 	for id, i := range instancesMap {
+		ts := []*ec2.TagSpecification{new(ec2.TagSpecification).SetTags(snapshotMap[id].Tags).SetResourceType("volume")}
 		log.Printf("Attempting to create volume for %s", id)
 		v, err := ec2c.CreateVolume(new(ec2.CreateVolumeInput).
 			SetSnapshotId(*snapshotMap[id].SnapshotId).
-			SetAvailabilityZone(*i.Placement.AvailabilityZone))
+			SetAvailabilityZone(*i.Placement.AvailabilityZone).
+			SetTagSpecifications(ts))
 		if err != nil {
 			//TODO delete vols
 			log.Fatalf("Couldn't create volume because %s", err)
@@ -50,7 +54,7 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	ids := shutdownInstances(instancesMap)
 
 	//detach the old volumes
-	var detachedVolumes []*string
+	var detachedVolIds []*string
 	for id, i := range instancesMap {
 		for _, b := range i.BlockDeviceMappings {
 			if *b.DeviceName == *i.RootDeviceName {
@@ -60,12 +64,12 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 					//todo reattach removed ones
 					log.Fatal("Can't remove vol", err)
 				}
-				detachedVolumes = append(detachedVolumes, b.Ebs.VolumeId)
+				detachedVolIds = append(detachedVolIds, b.Ebs.VolumeId)
 			}
 		}
 	}
 
-	err := ec2c.WaitUntilVolumeAvailable(new(ec2.DescribeVolumesInput).SetVolumeIds(detachedVolumes))
+	err := ec2c.WaitUntilVolumeAvailable(new(ec2.DescribeVolumesInput).SetVolumeIds(detachedVolIds))
 	if err != nil {
 		//todo reattach removed ones
 		log.Fatal("Can't remove vol", err)
@@ -90,7 +94,16 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	}
 
 	restartInstances(ids)
-	//TODO Add an option to delete the detached volumes? And the snapshots?
+	if rmVolumes {
+		detachedVols, err := getVolumesByIds(detachedVolIds)
+		if err != nil {
+			log.Fatal("Unable to fetch information to clean up volumes: ", err)
+		}
+		err = checkAndDeleteVolumes(detachedVols)
+		if err != nil {
+			log.Fatal("Can't delete volumes because ", err)
+		}
+	}
 }
 
 func gatherInfo(snapshots []*ec2.Snapshot) (map[string]*ec2.Instance, map[string]*ec2.Snapshot) {
