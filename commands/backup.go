@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/spf13/cobra"
 	"log"
 )
@@ -21,12 +23,12 @@ func BackupCommand() *cobra.Command {
 }
 
 func createSnapshots(tagValue string, backupId string) {
-	filters := []*ec2.Filter{new(ec2.Filter).SetName("tag:backup").SetValues([]*string{aws.String(tagValue)})}
-	input := new(ec2.DescribeInstancesInput).SetFilters(filters)
-	instancesMap := make(map[string]*ec2.Instance)
+	filters := []types.Filter{{Name: aws.String("tag:backup"), Values: []string{tagValue}}}
+	input := &ec2.DescribeInstancesInput{Filters: filters}
+	instancesMap := make(map[string]types.Instance)
 
 	for ok := true; ok; {
-		out, err := ec2c.DescribeInstances(input)
+		out, err := ec2c.DescribeInstances(context.TODO(), input)
 		if err != nil {
 			log.Fatal("Can't get instances", err)
 		}
@@ -37,7 +39,7 @@ func createSnapshots(tagValue string, backupId string) {
 			}
 		}
 		if ok = out.NextToken != nil; ok {
-			input.SetNextToken(*out.NextToken)
+			input.NextToken = out.NextToken
 		}
 	}
 
@@ -59,14 +61,18 @@ func createSnapshots(tagValue string, backupId string) {
 		for _, b := range i.BlockDeviceMappings {
 			if *b.DeviceName == *i.RootDeviceName {
 				log.Printf("Snapshotting %s of %s", id, *b.Ebs.VolumeId)
-				tags := append(i.Tags, new(ec2.Tag).SetKey("autorestore-backupId").SetValue(backupId))
-				tags = append(tags, new(ec2.Tag).SetKey("autorestore-instanceId").SetValue(id))
-				csi := new(ec2.CreateSnapshotInput).
-					SetVolumeId(*b.Ebs.VolumeId).
-					SetTagSpecifications([]*ec2.TagSpecification{new(ec2.TagSpecification).
-						SetResourceType("snapshot").
-						SetTags(tags)})
-				snap, err := ec2c.CreateSnapshot(csi)
+				tags := append(i.Tags,
+					types.Tag{Key: aws.String("autorestore-backupId"), Value: aws.String(backupId)},
+					types.Tag{Key: aws.String("autorestore-instanceId"), Value: aws.String(id)},
+				)
+				csi := &ec2.CreateSnapshotInput{
+					VolumeId: b.Ebs.VolumeId,
+					TagSpecifications: []types.TagSpecification{{
+						ResourceType: "snapshot",
+						Tags:         tags,
+					}},
+				}
+				snap, err := ec2c.CreateSnapshot(context.TODO(), csi)
 				if err != nil {
 					log.Fatal("Failed to create snapshot", err)
 				}

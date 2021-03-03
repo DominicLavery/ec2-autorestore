@@ -1,10 +1,13 @@
 package commands
 
 import (
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"context"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/spf13/cobra"
 	"log"
+	"time"
 )
 
 func RestoreCommand() *cobra.Command {
@@ -32,63 +35,75 @@ func restore(backupId string) {
 	processSnapshots(snapshots)
 }
 
-func processSnapshots(snapshots []*ec2.Snapshot) {
+func processSnapshots(snapshots []types.Snapshot) {
 	instancesMap, snapshotMap := gatherInfo(snapshots)
-	newVolumesMap := make(map[string]*ec2.Volume)
+	newVolumesMap := make(map[string]string)
 
 	//Make volumes
 	for id, i := range instancesMap {
-		ts := []*ec2.TagSpecification{new(ec2.TagSpecification).SetTags(snapshotMap[id].Tags).SetResourceType("volume")}
+		ts := []types.TagSpecification{{Tags: snapshotMap[id].Tags, ResourceType: "volume"}}
 		log.Printf("Attempting to create volume for %s", id)
-		v, err := ec2c.CreateVolume(new(ec2.CreateVolumeInput).
-			SetSnapshotId(*snapshotMap[id].SnapshotId).
-			SetAvailabilityZone(*i.Placement.AvailabilityZone).
-			SetTagSpecifications(ts))
+		v, err := ec2c.CreateVolume(context.TODO(), &ec2.CreateVolumeInput{
+			SnapshotId:        snapshotMap[id].SnapshotId,
+			AvailabilityZone:  i.Placement.AvailabilityZone,
+			TagSpecifications: ts,
+		})
+
 		if err != nil {
 			//TODO delete vols
 			log.Fatalf("Couldn't create volume because %s", err)
 		}
-		newVolumesMap[id] = v
+		newVolumesMap[id] = *v.VolumeId
 	}
 
 	ids := shutdownInstances(instancesMap)
 
 	//detach the old volumes
-	var detachedVolIds []*string
+	var detachedVolIds []string
 	for id, i := range instancesMap {
 		for _, b := range i.BlockDeviceMappings {
 			if *b.DeviceName == *i.RootDeviceName {
 				log.Printf("Attempting to detach vol for %s from %s\n", *b.Ebs.VolumeId, id)
-				_, err := ec2c.DetachVolume(new(ec2.DetachVolumeInput).SetVolumeId(*b.Ebs.VolumeId))
+				_, err := ec2c.DetachVolume(context.TODO(), &ec2.DetachVolumeInput{VolumeId: b.Ebs.VolumeId})
 				if err != nil {
 					//todo reattach removed ones
 					log.Fatal("Can't remove vol", err)
 				}
-				detachedVolIds = append(detachedVolIds, b.Ebs.VolumeId)
+				detachedVolIds = append(detachedVolIds, *b.Ebs.VolumeId)
 			}
 		}
 	}
+	volAvail := ec2.NewVolumeAvailableWaiter(ec2c)
+	maxWaitTime := 5 * time.Minute
+	params := &ec2.DescribeVolumesInput{VolumeIds: detachedVolIds}
+	err := volAvail.Wait(context.TODO(), params, maxWaitTime)
 
-	err := ec2c.WaitUntilVolumeAvailable(new(ec2.DescribeVolumesInput).SetVolumeIds(detachedVolIds))
 	if err != nil {
 		//todo reattach removed ones
 		log.Fatal("Can't remove vol", err)
 	}
 
 	//Attach the new volumes
-	var attachedVolumes []*string
+	var attachedVolumes []string
 	for id, v := range newVolumesMap {
-		log.Printf("Attaching vol %s to %s", *v.VolumeId, id)
+		log.Printf("Attaching vol %s to %s", v, id)
 		i := instancesMap[id]
-		_, err := ec2c.AttachVolume(new(ec2.AttachVolumeInput).SetInstanceId(id).SetVolumeId(*v.VolumeId).SetDevice(*i.RootDeviceName))
+		_, err := ec2c.AttachVolume(context.TODO(), &ec2.AttachVolumeInput{
+			InstanceId: aws.String(id),
+			VolumeId:   aws.String(v),
+			Device:     i.RootDeviceName,
+		})
 		if err != nil {
 			//TODO Some better handling
-			log.Printf("Failed to attach %v because: %v\n", *v.VolumeId, err)
+			log.Printf("Failed to attach %v because: %v\n", v, err)
 		}
-		attachedVolumes = append(attachedVolumes, v.VolumeId)
+		attachedVolumes = append(attachedVolumes, v)
 	}
 
-	err = ec2c.WaitUntilVolumeInUse(new(ec2.DescribeVolumesInput).SetVolumeIds(attachedVolumes))
+	volInUse := ec2.NewVolumeInUseWaiter(ec2c)
+	params = &ec2.DescribeVolumesInput{VolumeIds: attachedVolumes}
+	err = volInUse.Wait(context.TODO(), params, maxWaitTime)
+
 	if err != nil {
 		log.Fatal("Can't reattach vol", err)
 	}
@@ -106,9 +121,9 @@ func processSnapshots(snapshots []*ec2.Snapshot) {
 	}
 }
 
-func gatherInfo(snapshots []*ec2.Snapshot) (map[string]*ec2.Instance, map[string]*ec2.Snapshot) {
-	instancesMap := make(map[string]*ec2.Instance)
-	snapshotMap := make(map[string]*ec2.Snapshot)
+func gatherInfo(snapshots []types.Snapshot) (map[string]types.Instance, map[string]types.Snapshot) {
+	instancesMap := make(map[string]types.Instance)
+	snapshotMap := make(map[string]types.Snapshot)
 	for _, s := range snapshots {
 		var tagVal string
 		for _, tag := range s.Tags {
@@ -121,7 +136,7 @@ func gatherInfo(snapshots []*ec2.Snapshot) (map[string]*ec2.Instance, map[string
 			log.Fatalf("Snapshot %s did not have a tag of autorestore-instanceId\n", *s.SnapshotId)
 		}
 		log.Printf("Node %s found", tagVal)
-		i, err := ec2c.DescribeInstances(new(ec2.DescribeInstancesInput).SetInstanceIds([]*string{aws.String(tagVal)}))
+		i, err := ec2c.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{InstanceIds: []string{tagVal}})
 		if err != nil {
 			log.Fatalf("Couldn't get instance because %s", err)
 		}
