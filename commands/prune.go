@@ -1,8 +1,9 @@
 package commands
 
 import (
-	"github.com/spf13/cobra"
 	"log"
+
+	"github.com/spf13/cobra"
 )
 
 func PruneCommand() *cobra.Command {

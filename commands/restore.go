@@ -2,12 +2,13 @@ package commands
 
 import (
 	"context"
+	"log"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/spf13/cobra"
-	"log"
-	"time"
 )
 
 func RestoreCommand() *cobra.Command {
